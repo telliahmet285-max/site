@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bizim Küçük Dünyamız ❤️</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100vh; font-family: Arial, sans-serif;
+      background: linear-gradient(135deg, #ffe0ec, #e8dfff); color: #493442;
+    }
+    .screen { display:none; width:100%; min-height:100vh; padding:24px 16px; }
+    #loginScreen { display:flex; align-items:center; justify-content:center; }
+    .panel {
+      width:100%; max-width:430px; margin:auto; padding:25px;
+      background:rgba(255,255,255,.94); border-radius:22px;
+      box-shadow:0 10px 35px #8b597b25;
+    }
+    h1,h2 { text-align:center; }
+    input,button { width:100%; padding:13px; margin-top:12px; border-radius:12px; font-size:16px; }
+    input { border:1px solid #e5c8da; outline-color:#d875a5; }
+    button { border:none; background:#d96b9c; color:white; cursor:pointer; font-weight:bold; }
+    button:disabled { opacity:.6; cursor:wait; }
+    .secondary { background:#8b78bd; }
+    .message { min-height:20px; margin-top:12px; text-align:center; overflow-wrap:anywhere; color:#a22b54; }
+    #chatScreen { display:none; }
+    #messages { height:55vh; min-height:250px; overflow-y:auto; padding:12px; background:#fff7fb; border-radius:14px; }
+    .bubble { margin:10px 0; padding:12px; background:#f5d8e8; border-radius:12px; overflow-wrap:anywhere; }
+    .mine { background:#e5ddff; }
+    .meta { margin-bottom:5px; font-size:12px; opacity:.7; }
+    .sendRow { display:flex; gap:8px; align-items:center; }
+    .sendRow input { flex:1; min-width:0; }
+    .sendRow button { width:85px; flex-shrink:0; }
+    #status { text-align:center; font-size:13px; overflow-wrap:anywhere; }
+  </style>
+</head>
+<body>
+  <section id="loginScreen" class="screen">
+    <div class="panel">
+      <h1>Bizim Küçük Dünyamız ❤️</h1>
+      <p style="text-align:center">Birbirinize ait küçük bir dünya...</p>
+      <form id="loginForm">
+        <input id="email" type="email" placeholder="E-posta adresin" autocomplete="email" required>
+        <input id="password" type="password" placeholder="Şifren" autocomplete="current-password" required>
+        <button id="loginButton" type="submit">Giriş Yap ❤️</button>
+      </form>
+      <button id="registerButton" class="secondary" type="button">Yeni Hesap Oluştur</button>
+      <button id="resetButton" class="secondary" type="button">Şifremi Unuttum</button>
+      <p id="loginMessage" class="message" role="status"></p>
+    </div>
+  </section>
+
+  <section id="chatScreen" class="screen">
+    <div class="panel">
+      <h1>Bizim Sohbetimiz 💗</h1>
+      <p id="status">Bağlantı kuruluyor...</p>
+      <div id="messages" aria-live="polite"></div>
+      <form id="sendForm" class="sendRow">
+        <input id="messageInput" type="text" placeholder="Bir mesaj yaz..." maxlength="2000" autocomplete="off" required>
+        <button id="sendButton" type="submit">Gönder</button>
+      </form>
+      <p id="chatMessage" class="message" role="status"></p>
+      <button id="logoutButton" class="secondary" type="button">Çıkış Yap</button>
+    </div>
+  </section>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
+    import {
+      getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword,
+      onAuthStateChanged, signOut, sendPasswordResetEmail
+    } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
+    import {
+      getDatabase, ref, push, onChildAdded, query, limitToLast
+    } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-database.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyDhGfyZx-E7SJ9XSbL1k0TKDSDrOEZlE0k",
+      authDomain: "sirius-b02d7.firebaseapp.com",
+      databaseURL: "https://sirius-b02d7-default-rtdb.europe-west1.firebasedatabase.app",
+      projectId: "sirius-b02d7",
+      storageBucket: "sirius-b02d7.firebasestorage.app",
+      messagingSenderId: "695357799229",
+      appId: "1:695357799229:web:fb36b5e837de110feda354",
+      measurementId: "G-MH0HNFPPND"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getDatabase(app);
+
+    const loginScreen = document.getElementById("loginScreen");
+    const chatScreen = document.getElementById("chatScreen");
+    const loginForm = document.getElementById("loginForm");
+    const loginButton = document.getElementById("loginButton");
+    const registerButton = document.getElementById("registerButton");
+    const resetButton = document.getElementById("resetButton");
+    const logoutButton = document.getElementById("logoutButton");
+    const sendForm = document.getElementById("sendForm");
+    const sendButton = document.getElementById("sendButton");
+    const emailInput = document.getElementById("email");
+    const passwordInput = document.getElementById("password");
+    const messageInput = document.getElementById("messageInput");
+    const messagesBox = document.getElementById("messages");
+    const loginMessage = document.getElementById("loginMessage");
+    const chatMessage = document.getElementById("chatMessage");
+    const status = document.getElementById("status");
+
+    let stopMessages = null;
+    let pendingLogin = false;
+
+    function showLogin() {
+      loginScreen.style.display = "flex";
+      chatScreen.style.display = "none";
+    }
+
+    function showChat() {
+      loginScreen.style.display = "none";
+      chatScreen.style.display = "block";
+    }
+
+    function showError(error) {
+      const errors = {
+        "auth/invalid-email": "E-posta adresini kontrol et.",
+        "auth/user-not-found": "Bu hesap bulunamadı.",
+        "auth/wrong-password": "Şifre yanlış.",
+        "auth/invalid-credential": "E-posta veya şifre hatalı.",
+        "auth/email-already-in-use": "Bu e-posta zaten kayıtlı.",
+        "auth/weak-password": "Şifre en az 6 karakter olmalı.",
+        "auth/network-request-failed": "İnternet bağlantını kontrol et.",
+        "auth/too-many-requests": "Çok fazla deneme yapıldı. Daha sonra tekrar dene.",
+        "auth/operation-not-allowed": "Firebase'de E-posta/Şifre girişi etkin değil."
+      };
+      return errors[error.code] || ("İşlem başarısız: " + (error.message || error.code || "Bilinmeyen hata"));
+    }
+
+    loginForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (pendingLogin) return;
+
+      pendingLogin = true;
+      loginButton.disabled = true;
+      loginMessage.textContent = "Firebase bağlantısı kontrol ediliyor...";
+
+      // İstek yanıt vermezse ekranda sonsuza kadar beklemesin.
+      let timeoutId;
+      try {
+        const loginPromise = signInWithEmailAndPassword(
+          auth,
+          emailInput.value.trim(),
+          passwordInput.value
+        );
+
+        const timeoutPromise = new Promise((_, reject) => {
+          timeoutId = setTimeout(() => {
+            const error = new Error(
+              "Firebase 15 saniye içinde yanıt vermedi. İnternet bağlantısını, Firebase Authentication ayarlarını ve sitenin HTTPS üzerinden açıldığını kontrol et."
+            );
+            error.code = "app/login-timeout";
+            reject(error);
+          }, 15000);
+        });
+
+        await Promise.race([loginPromise, timeoutPromise]);
+
+        // Auth durumunu dinleyen bölüm de sohbet ekranını açar.
+        showChat();
+        loginMessage.textContent = "";
+      } catch (error) {
+        if (error.code === "app/login-timeout") {
+          loginMessage.textContent = error.message;
+        } else {
+          loginMessage.textContent = showError(error);
+        }
+      } finally {
+        clearTimeout(timeoutId);
+        pendingLogin = false;
+        loginButton.disabled = false;
+      }
+    });
+
+    registerButton.addEventListener("click", async () => {
+      const email = emailInput.value.trim();
+      const password = passwordInput.value;
+      if (!email || !password) {
+        loginMessage.textContent = "Önce e-posta adresini ve şifreni gir.";
+        return;
+      }
+      registerButton.disabled = true;
+      loginMessage.textContent = "Hesap oluşturuluyor...";
+      try {
+        await createUserWithEmailAndPassword(auth, email, password);
+        loginMessage.textContent = "Hesap oluşturuldu.";
+      } catch (error) {
+        loginMessage.textContent = showError(error);
+      } finally {
+        registerButton.disabled = false;
+      }
+    });
+
+    resetButton.addEventListener("click", async () => {
+      const email = emailInput.value.trim();
+      if (!email) {
+        loginMessage.textContent = "Şifre sıfırlama bağlantısı için e-posta adresini yaz.";
+        return;
+      }
+      try {
+        await sendPasswordResetEmail(auth, email);
+        loginMessage.textContent = "Şifre sıfırlama e-postası gönderildi.";
+      } catch (error) {
+        loginMessage.textContent = showError(error);
+      }
+    });
+
+    function listenToMessages(user) {
+      if (stopMessages) { stopMessages(); stopMessages = null; }
+      messagesBox.replaceChildren();
+      status.textContent = "Bağlandı: " + (user.email || "Kullanıcı");
+      const messagesQuery = query(ref(db, "messages"), limitToLast(100));
+      stopMessages = onChildAdded(messagesQuery, (snapshot) => {
+        const data = snapshot.val();
+        if (!data || typeof data.text !== "string") return;
+        const bubble = document.createElement("div");
+        bubble.className = "bubble" + (data.uid === user.uid ? " mine" : "");
+        const meta = document.createElement("div");
+        meta.className = "meta";
+        meta.textContent = data.email || "Kullanıcı";
+        const content = document.createElement("div");
+        content.textContent = data.text;
+        bubble.append(meta, content);
+        messagesBox.appendChild(bubble);
+        messagesBox.scrollTop = messagesBox.scrollHeight;
+      }, (error) => {
+        chatMessage.textContent = "Mesajlar alınamadı: " + error.message;
+      });
+    }
+
+    sendForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const user = auth.currentUser;
+      const text = messageInput.value.trim();
+      if (!user) {
+        chatMessage.textContent = "Önce giriş yapmalısın.";
+        showLogin();
+        return;
+      }
+      if (!text) return;
+      sendButton.disabled = true;
+      chatMessage.textContent = "";
+      try {
+        await push(ref(db, "messages"), {
+          uid: user.uid, email: user.email || "Kullanıcı",
+          text, createdAt: Date.now()
+        });
+        messageInput.value = "";
+        messageInput.focus();
+      } catch (error) {
+        chatMessage.textContent = "Mesaj gönderilemedi. Firebase Database kurallarını kontrol et.";
+      } finally {
+        sendButton.disabled = false;
+      }
+    });
+
+    logoutButton.addEventListener("click", async () => {
+      try { await signOut(auth); }
+      catch (error) { chatMessage.textContent = showError(error); }
+    });
+
+    onAuthStateChanged(auth, (user) => {
+      if (user) {
+        showChat();
+        listenToMessages(user);
+      } else {
+        if (stopMessages) { stopMessages(); stopMessages = null; }
+        messagesBox.replaceChildren();
+        status.textContent = "";
+        showLogin();
+      }
+    }, (error) => {
+      showLogin();
+      loginMessage.textContent = showError(error);
+    });
+  </script>
+</body>
+</html>
